@@ -60,7 +60,7 @@ func fetchFlagProduct(client *graphql.Client) (string, error) {
 		return "", fmt.Errorf("flag product not found - no matching products in Shopify")
 	}
 	product := response.Products.Edges[0].Node
-	fmt.Println("Found Product ID:", product.ID) // Debugging info
+	fmt.Println("Found Product ID:", product.ID)
 
 	// If product has a variant, return its ID
 	if len(product.Variants.Edges) > 0 {
@@ -77,26 +77,51 @@ func fetchFlagProduct(client *graphql.Client) (string, error) {
 func createOrder(client *graphql.Client, productID string) error {
 	mutation := `
 	mutation {
-		draftOrderCreate(input: {
-			lineItems: [{ variantId: "` + productID + `", quantity: 1 }],
-			email: "` + userEmail + `"
+		orderCreate(input: {
+			email: "` + userEmail + `",
+			lineItems: [{
+				variantId: "` + productID + `",
+				quantity: 1
+			}]
 		}) {
-			draftOrder {
+			order {
 				id
+			}
+			userErrors {
+				field
+				message
 			}
 		}
 	}`
+
 	req := graphql.NewRequest(mutation)
 	req.Header.Set("X-Shopify-Access-Token", accessToken)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := client.Run(ctx, req, nil); err != nil {
+	var response struct {
+		OrderCreate struct {
+			Order struct {
+				ID string `json:"id"`
+			} `json:"order"`
+			UserErrors []struct {
+				Field   []string `json:"field"`
+				Message string   `json:"message"`
+			} `json:"userErrors"`
+		} `json:"orderCreate"`
+	}
+
+	if err := client.Run(ctx, req, &response); err != nil {
 		return fmt.Errorf("error creating order: %v", err)
 	}
 
-	fmt.Println("Order placed successfully for flag product!")
+	// Check for GraphQL user errors
+	if len(response.OrderCreate.UserErrors) > 0 {
+		return fmt.Errorf("GraphQL error: %v", response.OrderCreate.UserErrors[0].Message)
+	}
+
+	fmt.Println("Order placed successfully! Order ID:", response.OrderCreate.Order.ID)
 	return nil
 }
 
